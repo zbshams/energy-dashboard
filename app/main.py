@@ -1,24 +1,19 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, HTMLResponse
 import os
-from dotenv import load_dotenv
-from app.processors.emporia import extract_emporia_zip
-from app.processors.weather import fetch_weather
-from app.processors.tou import calculate_tou_costs
-from app.processors.dashboard import generate_daily_html
-import json
-from datetime import datetime
 import traceback
 
-load_dotenv()
+from app.config import DEFAULT_RATES, WEATHER_LAT, WEATHER_LON
+from app.processors.emporia import extract_emporia_zip, load_csv_files
+from app.processors.tou import calculate_tou_costs
+from app.processors.dashboard import generate_daily_html, generate_hourly_html
 
-app = FastAPI()
+app = FastAPI(title="Energy Dashboard")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8000", "http://localhost:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,196 +21,111 @@ app.add_middleware(
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Energy Dashboard</title>
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-            .header h1 { font-size: 24px; margin-bottom: 4px; }
-            .header-meta { font-size: 13px; opacity: 0.9; }
-            .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-            .controls { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-            .controls button { padding: 10px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
-            .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-            .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
-            .btn-secondary { background: #e0e0e0; color: #333; }
-            .btn-secondary:hover { background: #d0d0d0; }
-            .rate-inputs { display: flex; gap: 12px; align-items: center; }
-            .rate-inputs input { width: 80px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
-            .rate-inputs label { font-size: 12px; color: #666; }
-            .dashboard-view { display: none; }
-            .dashboard-view.active { display: block; }
-            .upload-form { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-            .upload-form.active { display: block; }
-            .form-group { margin-bottom: 16px; }
-            label { display: block; margin-bottom: 6px; color: #555; font-weight: 500; font-size: 14px; }
-            input[type="file"] { width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; }
-            .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin-top: 12px; display: none; font-size: 13px; }
-            .success { background: #e8f5e9; color: #2e7d32; padding: 12px; border-radius: 6px; margin-top: 12px; display: none; }
-            .progress { display: none; margin-top: 12px; }
-            .progress-bar { width: 100%; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
-            .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); width: 0%; transition: width 0.3s; }
-            #dashboardContent { background: white; border-radius: 8px; padding: 20px; }
-            .empty-state { text-align: center; padding: 40px; color: #999; }
-            .empty-state h2 { margin-bottom: 12px; color: #666; }
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>⚡ Energy Dashboard</h1>
-            <div class="header-meta" id="headerMeta">Loading...</div>
-        </div>
+    return """<!DOCTYPE html>
+<html>
+<head>
+<title>Energy Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+.header { background: #2c3e50; color: white; padding: 20px; text-align: center; }
+.header h1 { margin-bottom: 5px; }
+.header p { opacity: 0.9; font-size: 14px; }
+.container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+.loading { text-align: center; padding: 40px; font-size: 16px; color: #666; }
+.spinner { display: inline-block; width: 30px; height: 30px; border: 3px solid #ddd; border-top: 3px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.dashboard { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 20px; }
+.upload-section { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 20px; margin-top: 20px; }
+.form-group { margin: 15px 0; }
+label { display: block; margin-bottom: 5px; color: #666; font-weight: bold; }
+input[type="file"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+button:hover { background: #0056b3; }
+.status { margin-top: 15px; padding: 12px; border-radius: 4px; display: none; }
+.status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+.status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+</style>
+</head>
+<body>
+<div class="header">
+<h1>Energy Dashboard</h1>
+<p id="timestamp">Loading data...</p>
+</div>
+<div class="container">
+<div id="dashboardContainer" class="loading">
+<div class="spinner"></div>
+<p>Loading your energy data...</p>
+</div>
+<div class="upload-section">
+<h2>Update Data</h2>
+<p style="margin-bottom: 15px; color: #666;">Upload a new Emporia Vue zip file to update the dashboard with fresh data.</p>
+<form id="uploadForm">
+<div class="form-group">
+<label>Emporia Zip File:</label>
+<input type="file" id="zipFile" accept=".zip" required>
+</div>
+<button type="submit">Upload & Refresh Dashboard</button>
+</form>
+<div id="status"></div>
+</div>
+</div>
 
-        <div class="container">
-            <div class="controls">
-                <button class="btn-primary" id="toggleUpload">📤 Upload New Data</button>
-                <div class="rate-inputs" id="rateControls" style="display: none;">
-                    <label>Update Rates (¢/kWh):</label>
-                    <input type="number" id="rateSOp" placeholder="0.053" step="0.001" min="0">
-                    <input type="number" id="rateOp" placeholder="0.076" step="0.001" min="0">
-                    <input type="number" id="ratePk" placeholder="0.32" step="0.001" min="0">
-                    <button class="btn-secondary" id="applyRates">Apply Rates</button>
-                </div>
-            </div>
+<script>
+window.addEventListener('DOMContentLoaded', async () => {
+try {
+const response = await fetch('/default-data');
+if (!response.ok) throw new Error('Failed to load default data');
+const data = await response.json();
+displayDashboard(data);
+} catch (error) {
+document.getElementById('dashboardContainer').innerHTML = '<p style="color: #721c24;">Error loading default data: ' + error.message + '</p>';
+}
+});
 
-            <div class="dashboard-view active" id="dashboardView">
-                <div class="empty-state" id="emptyState">
-                    <h2>Loading Dashboard...</h2>
-                </div>
-                <div id="dashboardContent"></div>
-            </div>
+document.getElementById('uploadForm').onsubmit = async (e) => {
+e.preventDefault();
+const statusDiv = document.getElementById('status');
+const formData = new FormData();
+formData.append('file', document.getElementById('zipFile').files[0]);
 
-            <div class="upload-form" id="uploadForm">
-                <h2 style="margin-bottom: 16px;">Upload New Emporia Data</h2>
-                <div class="form-group">
-                    <label for="zipFile">Select Zip File</label>
-                    <input type="file" id="zipFile" accept=".zip" required>
-                </div>
-                <button class="btn-primary" id="submitBtn">Upload & Generate</button>
-                <div class="error" id="error"></div>
-                <div class="success" id="success"></div>
-                <div class="progress" id="progress">
-                    <div class="progress-bar"><div class="progress-fill"></div></div>
-                </div>
-            </div>
-        </div>
+try {
+statusDiv.textContent = 'Uploading...';
+statusDiv.className = 'status';
+statusDiv.style.display = 'block';
 
-        <script>
-            let currentData = null;
-            let currentRates = { sop: 0.053, op: 0.076, pk: 0.32 };
+const response = await fetch('/upload', {
+method: 'POST',
+body: formData
+});
 
-            async function loadDefaultData() {
-                try {
-                    const response = await fetch('/default-data');
-                    if (response.ok) {
-                        const data = await response.json();
-                        currentData = data;
-                        currentRates = data.rates || currentRates;
-                        renderDashboard();
-                        document.getElementById('rateControls').style.display = 'flex';
-                        updateHeaderMeta(data.uploadDate);
-                        document.getElementById('emptyState').style.display = 'none';
-                    }
-                } catch (e) {
-                    console.error('Failed to load default data:', e);
-                    document.getElementById('emptyState').innerHTML = '<h2>Ready to Upload</h2><p>Click "Upload New Data" to get started</p>';
-                }
-            }
+if (!response.ok) {
+const error = await response.json();
+throw new Error(error.error || `Upload failed: ${response.status}`);
+}
 
-            function updateHeaderMeta(uploadDate) {
-                const date = uploadDate ? new Date(uploadDate).toLocaleDateString() : new Date().toLocaleDateString();
-                document.getElementById('headerMeta').textContent = `As of: ${date} | Rates: ${(currentRates.sop*100).toFixed(1)}¢ SOp, ${(currentRates.op*100).toFixed(1)}¢ Op, ${(currentRates.pk*100).toFixed(1)}¢ Pk`;
-            }
+const result = await response.json();
+statusDiv.className = 'status success';
+statusDiv.textContent = `Success! Processed ${result.date_count} days with ${result.device_count} devices.`;
+displayDashboard(result);
+document.getElementById('zipFile').value = '';
+} catch (error) {
+statusDiv.className = 'status error';
+statusDiv.textContent = `Error: ${error.message}`;
+}
+};
 
-            function renderDashboard() {
-                if (!currentData) return;
-                const container = document.getElementById('dashboardContent');
-                container.innerHTML = currentData.html;
-            }
-
-            document.getElementById('toggleUpload').addEventListener('click', () => {
-                const form = document.getElementById('uploadForm');
-                form.classList.toggle('active');
-            });
-
-            document.getElementById('submitBtn').addEventListener('click', async () => {
-                const zipFile = document.getElementById('zipFile').files[0];
-                const errorDiv = document.getElementById('error');
-                const successDiv = document.getElementById('success');
-                const progressDiv = document.getElementById('progress');
-
-                errorDiv.style.display = 'none';
-                successDiv.style.display = 'none';
-
-                if (!zipFile) {
-                    errorDiv.textContent = 'Please select a zip file';
-                    errorDiv.style.display = 'block';
-                    return;
-                }
-
-                const formData = new FormData();
-                formData.append('file', zipFile);
-                formData.append('custom_rates', JSON.stringify(currentRates));
-
-                progressDiv.style.display = 'block';
-
-                try {
-                    const response = await fetch('/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    if (!response.ok) {
-                        const text = await response.text();
-                        throw new Error(text || `Upload failed: ${response.status}`);
-                    }
-
-                    const data = await response.json();
-                    
-                    currentData = data;
-                    localStorage.setItem('energyDashboardData', JSON.stringify({
-                        data: currentData,
-                        rates: currentRates,
-                        uploadDate: new Date().toISOString()
-                    }));
-
-                    progressDiv.style.display = 'none';
-                    successDiv.textContent = '✓ Data uploaded! Refresh to see updates.';
-                    successDiv.style.display = 'block';
-
-                    setTimeout(() => {
-                        location.reload();
-                    }, 1500);
-
-                } catch (error) {
-                    progressDiv.style.display = 'none';
-                    errorDiv.textContent = `Error: ${error.message}`;
-                    errorDiv.style.display = 'block';
-                }
-            });
-
-            document.getElementById('applyRates').addEventListener('click', async () => {
-                const sop = parseFloat(document.getElementById('rateSOp').value) || currentRates.sop;
-                const op = parseFloat(document.getElementById('rateOp').value) || currentRates.op;
-                const pk = parseFloat(document.getElementById('ratePk').value) || currentRates.pk;
-
-                currentRates = { sop, op, pk };
-                updateHeaderMeta(new Date().toISOString());
-                renderDashboard();
-            });
-
-            // Load default data on page load
-            loadDefaultData();
-        </script>
-    </body>
-    </html>
-    """
+function displayDashboard(data) {
+const container = document.getElementById('dashboardContainer');
+container.className = 'dashboard';
+container.innerHTML = data.daily_html || '<p>No dashboard data available</p>';
+if (data.timestamp) {
+document.getElementById('timestamp').textContent = `Last updated: ${data.timestamp}`;
+}
+}
+</script>
+</body>
+</html>"""
 
 @app.get("/health")
 async def health():
@@ -223,67 +133,66 @@ async def health():
 
 @app.get("/default-data")
 async def get_default_data():
-    """Load default dashboard data if it exists"""
     try:
-        # Try to load from localStorage data (would be set after first upload)
-        saved = None
-        # For now, return empty - will be populated after first upload
-        raise HTTPException(status_code=404, detail="No default data")
-    except Exception as e:
-        raise HTTPException(status_code=404, detail="No data available")
-
-@app.post("/upload")
-async def upload(file: UploadFile = File(...), custom_rates: str = Form(None)):
-    try:
-        contents = await file.read()
+        data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+        backup_file = os.path.join(data_dir, "7C6538Backup_Panel1DAY.csv")
+        non_backup_file = os.path.join(data_dir, "74E120Non_Backup_Panel1DAY.csv")
         
-        if not contents:
-            raise ValueError("File is empty")
+        if not os.path.exists(backup_file) or not os.path.exists(non_backup_file):
+            return JSONResponse({"error": "Default data files not found"}, status_code=404)
         
-        # Extract and process Emporia data
-        daily_data, hourly_data, mains_daily, mains_hourly = extract_emporia_zip(contents)
+        processed = load_csv_files(backup_file, non_backup_file)
+        daily = processed["daily"]["devices"]
+        hourly = processed["hourly"]["devices"]
+        dates = processed["daily"]["timestamps"]
         
-        if not daily_data:
-            raise ValueError("No data found in zip file")
+        if not dates:
+            return JSONResponse({"error": "No data found in CSV files"}, status_code=400)
         
-        # Get date range for weather
-        dates = list(daily_data.keys())
-        weather_data = fetch_weather(dates)
-        
-        # Parse custom rates if provided
-        rates_override = None
-        if custom_rates:
-            try:
-                rates_dict = json.loads(custom_rates)
-                rates_override = {}
-                for date_str in daily_data.keys():
-                    rates_override[date_str] = {}
-                    if rates_dict.get('sop'):
-                        rates_override[date_str]['sop'] = rates_dict['sop']
-                    if rates_dict.get('op'):
-                        rates_override[date_str]['op'] = rates_dict['op']
-                    if rates_dict.get('pk'):
-                        rates_override[date_str]['pk'] = rates_dict['pk']
-            except Exception as e:
-                print(f"Error parsing rates: {e}")
-        
-        # Calculate TOU costs
-        daily_with_costs = calculate_tou_costs(daily_data, mains_daily, rates_override)
-        daily_html = generate_daily_html(daily_with_costs, weather_data)
+        costs = calculate_tou_costs(hourly, dates, DEFAULT_RATES)
+        daily_html = generate_daily_html(daily, hourly, costs)
         
         return {
             "status": "success",
-            "date_count": len(daily_data),
-            "device_count": sum(len(v) for v in daily_data.values()) if daily_data else 0,
-            "html": daily_html,
-            "rates": json.loads(custom_rates) if custom_rates else {"sop": 0.053, "op": 0.076, "pk": 0.32},
-            "uploadDate": datetime.now().isoformat()
+            "date_count": len(dates),
+            "device_count": len(daily),
+            "daily_html": daily_html,
+            "hourly_html": "",
+            "timestamp": dates[-1] if dates else "Unknown"
         }
-    
     except Exception as e:
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
-        print(error_msg)
-        raise HTTPException(status_code=400, detail=str(e))
+        print(f"Error in /default-data: {str(e)}")
+        print(traceback.format_exc())
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+@app.post("/upload")
+async def upload(file: UploadFile = File(...)):
+    try:
+        zip_bytes = await file.read()
+        processed = extract_emporia_zip(zip_bytes)
+        daily = processed["daily"]["devices"]
+        hourly = processed["hourly"]["devices"]
+        dates = processed["daily"]["timestamps"]
+
+        if not dates:
+            return JSONResponse({"error": "No data found in zip"}, status_code=400)
+
+        costs = calculate_tou_costs(hourly, dates, DEFAULT_RATES)
+        daily_html = generate_daily_html(daily, hourly, costs)
+        hourly_html = generate_hourly_html(hourly)
+
+        return {
+            "status": "success",
+            "date_count": len(dates),
+            "device_count": len(daily),
+            "daily_html": daily_html,
+            "hourly_html": hourly_html,
+            "timestamp": dates[-1] if dates else "Unknown"
+        }
+    except Exception as e:
+        print(f"Error in /upload: {str(e)}")
+        print(traceback.format_exc())
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 if __name__ == "__main__":
     import uvicorn
