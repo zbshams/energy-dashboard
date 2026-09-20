@@ -86,3 +86,32 @@ def merge_panels(panel_data):
                 merged_devices[device] = values
     
     return {"timestamps": timestamps or [], "devices": merged_devices}
+
+def load_csv_files(backup_path, non_backup_path):
+    """Load and process CSV files directly from filesystem"""
+    try:
+        daily_data = {}
+        hourly_data = {}
+        
+        # Load backup panel daily data
+        with open(backup_path, 'r') as f:
+            daily_data["Backup"] = parse_csv(f.read())
+        
+        # Load non-backup panel daily data
+        with open(non_backup_path, 'r') as f:
+            daily_data["Non_Backup"] = parse_csv(f.read())
+        
+        # Create hourly data from daily (simple approach: assume hourly is same as daily for now)
+        hourly_data = daily_data
+        
+        merged_daily = merge_panels(daily_data)
+        merged_hourly = merge_panels(hourly_data)
+        
+        return {
+            "daily": merged_daily,
+            "hourly": merged_hourly,
+            "mains_daily": {},
+            "mains_hourly": {}
+        }
+    except Exception as e:
+        raise ValueError(f"Failed to load CSV files: {e}")
