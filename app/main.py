@@ -8,6 +8,7 @@ from app.processors.weather import fetch_weather
 from app.processors.tou import calculate_tou_costs
 from app.processors.dashboard import generate_daily_html, generate_hourly_html
 import json
+from datetime import datetime
 
 load_dotenv()
 
@@ -30,127 +31,140 @@ async def root():
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Energy Dashboard Generator</title>
+        <title>Energy Dashboard</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
-            .container { background: white; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); padding: 40px; max-width: 600px; width: 100%; }
-            h1 { color: #333; margin-bottom: 10px; font-size: 28px; }
-            .subtitle { color: #888; margin-bottom: 30px; font-size: 14px; }
-            .form-group { margin-bottom: 24px; }
-            label { display: block; margin-bottom: 8px; color: #555; font-weight: 500; font-size: 14px; }
-            input[type="file"], input[type="number"] { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; transition: border-color 0.3s; }
-            input[type="file"]:focus, input[type="number"]:focus { outline: none; border-color: #667eea; }
-            .rate-fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
-            .rate-fields input { margin-bottom: 0; }
-            .rate-label { font-size: 12px; color: #888; margin-top: 4px; }
-            button { width: 100%; padding: 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
-            button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4); }
-            button:active { transform: translateY(0); }
-            button:disabled { opacity: 0.6; cursor: not-allowed; }
-            .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 8px; margin-top: 20px; display: none; }
-            .success { background: #e8f5e9; color: #2e7d32; padding: 12px; border-radius: 8px; margin-top: 20px; display: none; }
-            .progress { display: none; margin-top: 20px; }
-            .progress-bar { width: 100%; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .header h1 { font-size: 24px; margin-bottom: 4px; }
+            .header-meta { font-size: 13px; opacity: 0.9; }
+            .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+            .controls { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+            .controls button { padding: 10px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+            .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+            .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
+            .btn-secondary { background: #e0e0e0; color: #333; }
+            .btn-secondary:hover { background: #d0d0d0; }
+            .rate-inputs { display: flex; gap: 12px; align-items: center; }
+            .rate-inputs input { width: 80px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+            .rate-inputs label { font-size: 12px; color: #666; }
+            .dashboard-view { display: none; }
+            .dashboard-view.active { display: block; }
+            .upload-form { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            .upload-form.active { display: block; }
+            .form-group { margin-bottom: 16px; }
+            label { display: block; margin-bottom: 6px; color: #555; font-weight: 500; font-size: 14px; }
+            input[type="file"] { width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; }
+            .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin-top: 12px; display: none; }
+            .success { background: #e8f5e9; color: #2e7d32; padding: 12px; border-radius: 6px; margin-top: 12px; display: none; }
+            .progress { display: none; margin-top: 12px; }
+            .progress-bar { width: 100%; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
             .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); width: 0%; transition: width 0.3s; }
-            .progress-text { font-size: 13px; color: #666; margin-top: 8px; }
-            .collapse-toggle { cursor: pointer; color: #667eea; font-weight: 500; user-select: none; display: inline-block; }
-            .rate-section { display: none; }
-            .rate-section.expanded { display: block; }
-            .file-name { font-size: 13px; color: #666; margin-top: 4px; }
+            #dashboardContent { background: white; border-radius: 8px; padding: 20px; }
+            .empty-state { text-align: center; padding: 40px; color: #999; }
+            .empty-state h2 { margin-bottom: 12px; color: #666; }
         </style>
     </head>
     <body>
+        <div class="header">
+            <h1>⚡ Energy Dashboard</h1>
+            <div class="header-meta" id="headerMeta">No data uploaded yet</div>
+        </div>
+
         <div class="container">
-            <h1>⚡ Energy Dashboard Generator</h1>
-            <p class="subtitle">Upload your Emporia Vue data to generate interactive energy dashboards</p>
-            <form id="uploadForm">
+            <div class="controls">
+                <button class="btn-primary" id="toggleUpload">📤 Upload New Data</button>
+                <div class="rate-inputs" id="rateControls" style="display: none;">
+                    <label>Update Rates (¢/kWh):</label>
+                    <input type="number" id="rateSOp" placeholder="0.053" step="0.001" min="0">
+                    <input type="number" id="rateOp" placeholder="0.076" step="0.001" min="0">
+                    <input type="number" id="ratePk" placeholder="0.32" step="0.001" min="0">
+                    <button class="btn-secondary" id="applyRates">Apply Rates</button>
+                </div>
+            </div>
+
+            <div class="dashboard-view active" id="dashboardView">
+                <div class="empty-state" id="emptyState">
+                    <h2>No Dashboard Yet</h2>
+                    <p>Upload your Emporia Vue data to get started</p>
+                </div>
+                <div id="dashboardContent"></div>
+            </div>
+
+            <div class="upload-form" id="uploadForm">
+                <h2 style="margin-bottom: 16px;">Upload Emporia Zip File</h2>
                 <div class="form-group">
-                    <label for="zipFile">📁 Select Emporia Zip File</label>
+                    <label for="zipFile">Select Zip File</label>
                     <input type="file" id="zipFile" accept=".zip" required>
-                    <div class="file-name" id="fileName"></div>
                 </div>
-
-                <div class="form-group">
-                    <div><span class="collapse-toggle" id="rateToggle">⚙️ Customize Rates (Optional)</span></div>
-                    <div class="rate-section" id="rateSection">
-                        <p style="margin: 12px 0 16px; color: #666; font-size: 13px;">Override default PECO Smart Time rates (¢/kWh)</p>
-                        <div class="rate-fields">
-                            <div>
-                                <input type="number" id="superOffPeak" placeholder="0.053" step="0.001" min="0">
-                                <div class="rate-label">Super Off-Peak (0-6am)</div>
-                            </div>
-                            <div>
-                                <input type="number" id="offPeak" placeholder="0.076" step="0.001" min="0">
-                                <div class="rate-label">Off-Peak</div>
-                            </div>
-                            <div>
-                                <input type="number" id="peak" placeholder="0.32" step="0.001" min="0">
-                                <div class="rate-label">Peak (2-6pm weekdays)</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <button type="submit" id="submitBtn">Generate Dashboard</button>
+                <button class="btn-primary" id="submitBtn">Upload & Generate</button>
                 <div class="error" id="error"></div>
                 <div class="success" id="success"></div>
                 <div class="progress" id="progress">
-                    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-                    <div class="progress-text" id="progressText">Processing...</div>
+                    <div class="progress-bar"><div class="progress-fill"></div></div>
                 </div>
-            </form>
+            </div>
         </div>
 
         <script>
-            // Update file name display
-            document.getElementById('zipFile').addEventListener('change', (e) => {
-                const fileName = e.target.files[0]?.name || '';
-                document.getElementById('fileName').textContent = fileName ? `Selected: ${fileName}` : '';
+            let currentData = null;
+            let currentRates = { sop: 0.053, op: 0.076, pk: 0.32 };
+
+            // Load saved data from localStorage
+            function loadSavedData() {
+                const saved = localStorage.getItem('energyDashboardData');
+                if (saved) {
+                    try {
+                        const data = JSON.parse(saved);
+                        currentData = data.data;
+                        currentRates = data.rates || currentRates;
+                        renderDashboard();
+                        document.getElementById('rateControls').style.display = 'flex';
+                        updateHeaderMeta(data.uploadDate);
+                        document.getElementById('emptyState').style.display = 'none';
+                    } catch(e) {
+                        console.error('Failed to load saved data:', e);
+                    }
+                }
+            }
+
+            function updateHeaderMeta(uploadDate) {
+                const date = uploadDate ? new Date(uploadDate).toLocaleDateString() : 'Unknown';
+                document.getElementById('headerMeta').textContent = `Last updated: ${date} | Rates: ${(currentRates.sop*100).toFixed(1)}¢ SOp, ${(currentRates.op*100).toFixed(1)}¢ Op, ${(currentRates.pk*100).toFixed(1)}¢ Pk`;
+            }
+
+            function renderDashboard() {
+                if (!currentData) return;
+                const container = document.getElementById('dashboardContent');
+                // Insert the HTML dashboard with current rates applied
+                container.innerHTML = currentData.html;
+            }
+
+            document.getElementById('toggleUpload').addEventListener('click', () => {
+                const form = document.getElementById('uploadForm');
+                form.classList.toggle('active');
             });
 
-            // Toggle rate section
-            document.getElementById('rateToggle').addEventListener('click', () => {
-                document.getElementById('rateSection').classList.toggle('expanded');
-            });
-
-            document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
+            document.getElementById('submitBtn').addEventListener('click', async () => {
                 const zipFile = document.getElementById('zipFile').files[0];
                 const errorDiv = document.getElementById('error');
                 const successDiv = document.getElementById('success');
                 const progressDiv = document.getElementById('progress');
-                const submitBtn = document.getElementById('submitBtn');
 
                 errorDiv.style.display = 'none';
                 successDiv.style.display = 'none';
 
                 if (!zipFile) {
-                    errorDiv.textContent = 'Please select an Emporia zip file';
+                    errorDiv.textContent = 'Please select a zip file';
                     errorDiv.style.display = 'block';
                     return;
                 }
 
-                // Prepare form data
                 const formData = new FormData();
                 formData.append('file', zipFile);
-                
-                // Add custom rates if provided
-                const sop = document.getElementById('superOffPeak').value;
-                const op = document.getElementById('offPeak').value;
-                const pk = document.getElementById('peak').value;
-                if (sop || op || pk) {
-                    formData.append('custom_rates', JSON.stringify({
-                        'sop': sop ? parseFloat(sop) : null,
-                        'op': op ? parseFloat(op) : null,
-                        'pk': pk ? parseFloat(pk) : null
-                    }));
-                }
+                formData.append('custom_rates', JSON.stringify(currentRates));
 
                 progressDiv.style.display = 'block';
-                submitBtn.disabled = true;
-                document.getElementById('progressText').textContent = 'Uploading and processing...';
-                document.getElementById('progressFill').style.width = '30%';
 
                 try {
                     const response = await fetch('/upload', {
@@ -158,32 +172,55 @@ async def root():
                         body: formData
                     });
 
-                    document.getElementById('progressFill').style.width = '70%';
-
-                    if (!response.ok) {
-                        throw new Error(`Upload failed: ${response.status}`);
-                    }
+                    if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
 
                     const data = await response.json();
-                    document.getElementById('progressFill').style.width = '100%';
-                    document.getElementById('progressText').textContent = `✓ Generated ${data.date_count} days of data with ${data.device_count} devices`;
                     
+                    // Save to localStorage
+                    currentData = { html: data.daily_html };
+                    localStorage.setItem('energyDashboardData', JSON.stringify({
+                        data: currentData,
+                        rates: currentRates,
+                        uploadDate: new Date().toISOString()
+                    }));
+
+                    progressDiv.style.display = 'none';
+                    successDiv.textContent = '✓ Data uploaded! Refresh to see dashboard.';
+                    successDiv.style.display = 'block';
+
                     setTimeout(() => {
-                        progressDiv.style.display = 'none';
-                        submitBtn.disabled = false;
-                        successDiv.innerHTML = `✓ Dashboard generated! Your data has been processed.`;
-                        successDiv.style.display = 'block';
-                        document.getElementById('uploadForm').reset();
-                        document.getElementById('fileName').textContent = '';
-                    }, 500);
+                        location.reload();
+                    }, 1000);
 
                 } catch (error) {
                     progressDiv.style.display = 'none';
-                    submitBtn.disabled = false;
                     errorDiv.textContent = `Error: ${error.message}`;
                     errorDiv.style.display = 'block';
                 }
             });
+
+            document.getElementById('applyRates').addEventListener('click', async () => {
+                const sop = parseFloat(document.getElementById('rateSOp').value) || currentRates.sop;
+                const op = parseFloat(document.getElementById('rateOp').value) || currentRates.op;
+                const pk = parseFloat(document.getElementById('ratePk').value) || currentRates.pk;
+
+                currentRates = { sop, op, pk };
+                updateHeaderMeta(localStorage.getItem('energyDashboardData') ? JSON.parse(localStorage.getItem('energyDashboardData')).uploadDate : null);
+                
+                // Re-render with new rates
+                renderDashboard();
+
+                // Save updated rates
+                const saved = localStorage.getItem('energyDashboardData');
+                if (saved) {
+                    const data = JSON.parse(saved);
+                    data.rates = currentRates;
+                    localStorage.setItem('energyDashboardData', JSON.stringify(data));
+                }
+            });
+
+            // Initialize
+            loadSavedData();
         </script>
     </body>
     </html>
@@ -196,20 +233,15 @@ async def health():
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), custom_rates: str = Form(None)):
     try:
-        # Read the uploaded zip file
         contents = await file.read()
-        
-        # Extract and process Emporia data
         daily_data, hourly_data, mains_daily, mains_hourly = extract_emporia_zip(contents)
         
-        # Get date range for weather
         if daily_data:
             dates = list(daily_data.keys())
             weather_data = fetch_weather(dates)
         else:
             weather_data = {}
         
-        # Parse custom rates if provided
         rates_override = None
         if custom_rates:
             try:
@@ -226,20 +258,14 @@ async def upload(file: UploadFile = File(...), custom_rates: str = Form(None)):
             except:
                 pass
         
-        # Calculate TOU costs
         daily_with_costs = calculate_tou_costs(daily_data, mains_daily, rates_override)
-        hourly_with_costs = calculate_tou_costs(hourly_data, mains_hourly, rates_override)
-        
-        # Generate dashboards
         daily_html = generate_daily_html(daily_with_costs, weather_data)
-        hourly_html = generate_hourly_html(hourly_with_costs, weather_data)
         
         return {
             "status": "success",
             "date_count": len(daily_data),
             "device_count": sum(len(v) for v in daily_data.values()) if daily_data else 0,
-            "daily_html": daily_html,
-            "hourly_html": hourly_html
+            "daily_html": daily_html
         }
     
     except Exception as e:
