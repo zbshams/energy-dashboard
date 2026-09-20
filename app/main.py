@@ -6,9 +6,10 @@ from dotenv import load_dotenv
 from app.processors.emporia import extract_emporia_zip
 from app.processors.weather import fetch_weather
 from app.processors.tou import calculate_tou_costs
-from app.processors.dashboard import generate_daily_html, generate_hourly_html
+from app.processors.dashboard import generate_daily_html
 import json
 from datetime import datetime
+import traceback
 
 load_dotenv()
 
@@ -55,7 +56,7 @@ async def root():
             .form-group { margin-bottom: 16px; }
             label { display: block; margin-bottom: 6px; color: #555; font-weight: 500; font-size: 14px; }
             input[type="file"] { width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; }
-            .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin-top: 12px; display: none; }
+            .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin-top: 12px; display: none; font-size: 13px; }
             .success { background: #e8f5e9; color: #2e7d32; padding: 12px; border-radius: 6px; margin-top: 12px; display: none; }
             .progress { display: none; margin-top: 12px; }
             .progress-bar { width: 100%; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
@@ -68,7 +69,7 @@ async def root():
     <body>
         <div class="header">
             <h1>⚡ Energy Dashboard</h1>
-            <div class="header-meta" id="headerMeta">No data uploaded yet</div>
+            <div class="header-meta" id="headerMeta">Loading...</div>
         </div>
 
         <div class="container">
@@ -85,14 +86,13 @@ async def root():
 
             <div class="dashboard-view active" id="dashboardView">
                 <div class="empty-state" id="emptyState">
-                    <h2>No Dashboard Yet</h2>
-                    <p>Upload your Emporia Vue data to get started</p>
+                    <h2>Loading Dashboard...</h2>
                 </div>
                 <div id="dashboardContent"></div>
             </div>
 
             <div class="upload-form" id="uploadForm">
-                <h2 style="margin-bottom: 16px;">Upload Emporia Zip File</h2>
+                <h2 style="margin-bottom: 16px;">Upload New Emporia Data</h2>
                 <div class="form-group">
                     <label for="zipFile">Select Zip File</label>
                     <input type="file" id="zipFile" accept=".zip" required>
@@ -110,33 +110,32 @@ async def root():
             let currentData = null;
             let currentRates = { sop: 0.053, op: 0.076, pk: 0.32 };
 
-            // Load saved data from localStorage
-            function loadSavedData() {
-                const saved = localStorage.getItem('energyDashboardData');
-                if (saved) {
-                    try {
-                        const data = JSON.parse(saved);
-                        currentData = data.data;
+            async function loadDefaultData() {
+                try {
+                    const response = await fetch('/default-data');
+                    if (response.ok) {
+                        const data = await response.json();
+                        currentData = data;
                         currentRates = data.rates || currentRates;
                         renderDashboard();
                         document.getElementById('rateControls').style.display = 'flex';
                         updateHeaderMeta(data.uploadDate);
                         document.getElementById('emptyState').style.display = 'none';
-                    } catch(e) {
-                        console.error('Failed to load saved data:', e);
                     }
+                } catch (e) {
+                    console.error('Failed to load default data:', e);
+                    document.getElementById('emptyState').innerHTML = '<h2>Ready to Upload</h2><p>Click "Upload New Data" to get started</p>';
                 }
             }
 
             function updateHeaderMeta(uploadDate) {
-                const date = uploadDate ? new Date(uploadDate).toLocaleDateString() : 'Unknown';
-                document.getElementById('headerMeta').textContent = `Last updated: ${date} | Rates: ${(currentRates.sop*100).toFixed(1)}¢ SOp, ${(currentRates.op*100).toFixed(1)}¢ Op, ${(currentRates.pk*100).toFixed(1)}¢ Pk`;
+                const date = uploadDate ? new Date(uploadDate).toLocaleDateString() : new Date().toLocaleDateString();
+                document.getElementById('headerMeta').textContent = `As of: ${date} | Rates: ${(currentRates.sop*100).toFixed(1)}¢ SOp, ${(currentRates.op*100).toFixed(1)}¢ Op, ${(currentRates.pk*100).toFixed(1)}¢ Pk`;
             }
 
             function renderDashboard() {
                 if (!currentData) return;
                 const container = document.getElementById('dashboardContent');
-                // Insert the HTML dashboard with current rates applied
                 container.innerHTML = currentData.html;
             }
 
@@ -172,12 +171,14 @@ async def root():
                         body: formData
                     });
 
-                    if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
+                    if (!response.ok) {
+                        const text = await response.text();
+                        throw new Error(text || `Upload failed: ${response.status}`);
+                    }
 
                     const data = await response.json();
                     
-                    // Save to localStorage
-                    currentData = { html: data.daily_html };
+                    currentData = data;
                     localStorage.setItem('energyDashboardData', JSON.stringify({
                         data: currentData,
                         rates: currentRates,
@@ -185,12 +186,12 @@ async def root():
                     }));
 
                     progressDiv.style.display = 'none';
-                    successDiv.textContent = '✓ Data uploaded! Refresh to see dashboard.';
+                    successDiv.textContent = '✓ Data uploaded! Refresh to see updates.';
                     successDiv.style.display = 'block';
 
                     setTimeout(() => {
                         location.reload();
-                    }, 1000);
+                    }, 1500);
 
                 } catch (error) {
                     progressDiv.style.display = 'none';
@@ -205,22 +206,12 @@ async def root():
                 const pk = parseFloat(document.getElementById('ratePk').value) || currentRates.pk;
 
                 currentRates = { sop, op, pk };
-                updateHeaderMeta(localStorage.getItem('energyDashboardData') ? JSON.parse(localStorage.getItem('energyDashboardData')).uploadDate : null);
-                
-                // Re-render with new rates
+                updateHeaderMeta(new Date().toISOString());
                 renderDashboard();
-
-                // Save updated rates
-                const saved = localStorage.getItem('energyDashboardData');
-                if (saved) {
-                    const data = JSON.parse(saved);
-                    data.rates = currentRates;
-                    localStorage.setItem('energyDashboardData', JSON.stringify(data));
-                }
             });
 
-            // Initialize
-            loadSavedData();
+            // Load default data on page load
+            loadDefaultData();
         </script>
     </body>
     </html>
@@ -230,18 +221,36 @@ async def root():
 async def health():
     return {"status": "ok"}
 
+@app.get("/default-data")
+async def get_default_data():
+    """Load default dashboard data if it exists"""
+    try:
+        # Try to load from localStorage data (would be set after first upload)
+        saved = None
+        # For now, return empty - will be populated after first upload
+        raise HTTPException(status_code=404, detail="No default data")
+    except Exception as e:
+        raise HTTPException(status_code=404, detail="No data available")
+
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), custom_rates: str = Form(None)):
     try:
         contents = await file.read()
+        
+        if not contents:
+            raise ValueError("File is empty")
+        
+        # Extract and process Emporia data
         daily_data, hourly_data, mains_daily, mains_hourly = extract_emporia_zip(contents)
         
-        if daily_data:
-            dates = list(daily_data.keys())
-            weather_data = fetch_weather(dates)
-        else:
-            weather_data = {}
+        if not daily_data:
+            raise ValueError("No data found in zip file")
         
+        # Get date range for weather
+        dates = list(daily_data.keys())
+        weather_data = fetch_weather(dates)
+        
+        # Parse custom rates if provided
         rates_override = None
         if custom_rates:
             try:
@@ -255,9 +264,10 @@ async def upload(file: UploadFile = File(...), custom_rates: str = Form(None)):
                         rates_override[date_str]['op'] = rates_dict['op']
                     if rates_dict.get('pk'):
                         rates_override[date_str]['pk'] = rates_dict['pk']
-            except:
-                pass
+            except Exception as e:
+                print(f"Error parsing rates: {e}")
         
+        # Calculate TOU costs
         daily_with_costs = calculate_tou_costs(daily_data, mains_daily, rates_override)
         daily_html = generate_daily_html(daily_with_costs, weather_data)
         
@@ -265,10 +275,14 @@ async def upload(file: UploadFile = File(...), custom_rates: str = Form(None)):
             "status": "success",
             "date_count": len(daily_data),
             "device_count": sum(len(v) for v in daily_data.values()) if daily_data else 0,
-            "daily_html": daily_html
+            "html": daily_html,
+            "rates": json.loads(custom_rates) if custom_rates else {"sop": 0.053, "op": 0.076, "pk": 0.32},
+            "uploadDate": datetime.now().isoformat()
         }
     
     except Exception as e:
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
         raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":
